@@ -13,7 +13,6 @@ import {
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
 } from "@/common/constants/storage";
-
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 
 import { ProposePlanToolCall } from "./ProposePlanToolCall";
