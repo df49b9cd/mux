@@ -18,6 +18,7 @@ import { PositionedMenu, PositionedMenuItem } from "../PositionedMenu/Positioned
 import { MessageListProvider } from "@/browser/features/Messages/MessageListContext";
 import { cn } from "@/common/lib/utils";
 import { MessageRenderer } from "@/browser/features/Messages/MessageRenderer";
+import { MarkdownRenderer } from "@/browser/features/Messages/MarkdownRenderer";
 import type { UserMessageNavigation } from "@/browser/features/Messages/UserMessage";
 import { InterruptedBarrier } from "@/browser/features/Messages/ChatBarrier/InterruptedBarrier";
 import { EditCutoffBarrier } from "@/browser/features/Messages/ChatBarrier/EditCutoffBarrier";
@@ -899,21 +900,17 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
                   onCancelCompaction={handleCancelCompactionFromBarrier}
                 />
                 {shouldShowQueuedAgentTaskPrompt && (
-                  <QueuedMessage
-                    message={{
-                      id: `queued-agent-task-${workspaceId}`,
-                      content: queuedAgentTaskPrompt ?? "",
-                    }}
-                  />
-                )}
-                {workspaceState?.queuedMessage && (
-                  <QueuedMessage
-                    message={workspaceState.queuedMessage}
-                    onEdit={() => void handleEditQueuedMessage()}
-                    onSendImmediately={
-                      workspaceState.canInterrupt ? handleSendQueuedImmediately : undefined
-                    }
-                  />
+                  <div className="mt-4 mb-1 ml-auto w-fit max-w-full">
+                    <div className="rounded-lg border border-[var(--color-user-border)] bg-[var(--color-user-surface)] px-3 py-2 text-sm">
+                      <div className="text-muted mb-1 text-[11px] font-medium">Queued</div>
+                      <MarkdownRenderer
+                        content={queuedAgentTaskPrompt ?? ""}
+                        className="user-message-markdown text-foreground"
+                        preserveLineBreaks
+                        style={{ overflowWrap: "break-word", wordBreak: "break-word" }}
+                      />
+                    </div>
+                  </div>
                 )}
                 <ConcurrentLocalWarning
                   workspaceId={workspaceId}
@@ -974,6 +971,11 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
             onCancelEdit={handleCancelEdit}
             onEditLastUserMessage={handleEditLastUserMessageClick}
             onChatInputReady={handleChatInputReady}
+            queuedMessage={workspaceState?.queuedMessage ?? null}
+            onEditQueuedMessage={() => void handleEditQueuedMessage()}
+            onSendQueuedImmediately={
+              workspaceState?.canInterrupt ? handleSendQueuedImmediately : undefined
+            }
             reviews={reviews}
             onCheckReviews={handleCheckReviews}
           />
@@ -1004,6 +1006,9 @@ interface ChatInputPaneProps {
   onCancelEdit: () => void;
   onEditLastUserMessage: () => void;
   onChatInputReady: (api: ChatInputAPI) => void;
+  queuedMessage: QueuedMessageData | null;
+  onEditQueuedMessage: () => void;
+  onSendQueuedImmediately: (() => Promise<void>) | undefined;
   reviews: ReviewsState;
   onCheckReviews: (ids: string[]) => void;
 }
@@ -1029,6 +1034,13 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       )}
       <BackgroundProcessesBanner workspaceId={props.workspaceId} />
       <ReviewsBanner workspaceId={props.workspaceId} />
+      {props.queuedMessage && (
+        <QueuedMessage
+          message={props.queuedMessage}
+          onEdit={() => void props.onEditQueuedMessage()}
+          onSendImmediately={props.onSendQueuedImmediately}
+        />
+      )}
       {props.isQueuedAgentTask && (
         <div className="border-border-medium bg-background-secondary text-muted mb-2 rounded-md border px-3 py-2 text-xs">
           This agent task is queued and will start automatically when a parallel slot is available.
