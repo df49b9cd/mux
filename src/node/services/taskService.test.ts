@@ -1033,12 +1033,17 @@ describe("TaskService", () => {
     expect(created.success).toBe(true);
     if (!created.success) return;
 
-    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with inherited model", {
-      model: "openai:gpt-5.3-codex",
-      agentId: "explore",
-      thinkingLevel: "xhigh",
-      experiments: undefined,
-    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with inherited model",
+      {
+        model: "openai:gpt-5.3-codex",
+        agentId: "explore",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
 
     const postCfg = config.loadConfigOrDefault();
     const childEntry = Array.from(postCfg.projects.values())
@@ -1103,7 +1108,8 @@ describe("TaskService", () => {
         agentId: "explore",
         thinkingLevel: "xhigh",
         experiments: undefined,
-      }
+      },
+      { agentInitiated: true }
     );
 
     const postCfg = config.loadConfigOrDefault();
@@ -1171,7 +1177,8 @@ describe("TaskService", () => {
         agentId: "explore",
         thinkingLevel: "off",
         experiments: undefined,
-      }
+      },
+      { agentInitiated: true }
     );
 
     const postCfg = config.loadConfigOrDefault();
@@ -1243,12 +1250,17 @@ describe("TaskService", () => {
     expect(created.success).toBe(true);
     if (!created.success) return;
 
-    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
-      model: "openai:gpt-5.3-codex",
-      agentId: "custom",
-      thinkingLevel: "xhigh",
-      experiments: undefined,
-    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with custom agent",
+      {
+        model: "openai:gpt-5.3-codex",
+        agentId: "custom",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
 
     const postCfg = config.loadConfigOrDefault();
     const childEntry = Array.from(postCfg.projects.values())
@@ -1319,12 +1331,17 @@ describe("TaskService", () => {
     expect(created.success).toBe(true);
     if (!created.success) return;
 
-    expect(sendMessage).toHaveBeenCalledWith(created.data.taskId, "run task with custom agent", {
-      model: "openai:gpt-5.3-codex",
-      agentId: "custom",
-      thinkingLevel: "xhigh",
-      experiments: undefined,
-    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with custom agent",
+      {
+        model: "openai:gpt-5.3-codex",
+        agentId: "custom",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
   }, 20_000);
   test("auto-resumes a parent workspace until background tasks finish", async () => {
     const config = await createTestConfig(rootDir);
