@@ -1,4 +1,4 @@
-import { os } from "@orpc/server";
+import { os, ORPCError } from "@orpc/server";
 import * as schemas from "@/common/orpc/schemas";
 import type { ORPCContext } from "./context";
 import { OnePasswordService } from "@/node/services/onePasswordService";
@@ -82,6 +82,23 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+
+const RAW_QUERY_USER_ERROR_PATTERNS = [
+  /^parser error:/i,
+  /^binder error:/i,
+  /^catalog error:/i,
+  /^conversion error:/i,
+  /^invalid input error:/i,
+  /^out of range error:/i,
+  /^not implemented error:/i,
+  /query contains disallowed sql/i,
+  /string literals cannot be used as table sources/i,
+] as const;
+
+function shouldExposeRawQueryError(error: unknown): boolean {
+  const message = getErrorMessage(error);
+  return RAW_QUERY_USER_ERROR_PATTERNS.some((pattern) => pattern.test(message));
+}
 
 /**
  * Resolves runtime and discovery path for agent operations.
@@ -4329,7 +4346,25 @@ export const router = (authToken?: string) => {
         .input(schemas.analytics.executeRawQuery.input)
         .output(schemas.analytics.executeRawQuery.output)
         .handler(async ({ context, input }) => {
-          return context.analyticsService.executeRawQuery(input.sql);
+          try {
+            return await context.analyticsService.executeRawQuery(input.sql);
+          } catch (error) {
+            if (error instanceof ORPCError) {
+              throw error;
+            }
+
+            // Only surface user-authored SQL issues as BAD_REQUEST. Worker/service
+            // infrastructure faults must remain internal errors for correct health
+            // signaling and retry semantics.
+            if (!shouldExposeRawQueryError(error)) {
+              throw error;
+            }
+
+            throw new ORPCError("BAD_REQUEST", {
+              message: getErrorMessage(error),
+              cause: error,
+            });
+          }
         }),
 
       rebuildDatabase: t
