@@ -62,6 +62,7 @@ import type { MuxDeepLinkPayload } from "../common/types/deepLink";
 import type { UpdateStatus } from "../common/orpc/types";
 import { parseMuxDeepLink } from "../common/utils/deepLink";
 
+import { normalizeLocalhostProxyUrl } from "../common/utils/localhostProxyUrl";
 import assert from "../common/utils/assert";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
 import { loadTokenizerModules } from "../node/utils/main/tokenizer";
@@ -105,6 +106,11 @@ if (isE2ETest) {
     console.warn("Failed to prepare test userData directory:", error);
   }
 }
+
+// MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
+const localhostProxyTemplate =
+  // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+  process.env.MUX_PROXY_URI?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
 
 const devServerPort = process.env.MUX_DEVSERVER_PORT ?? "5173";
 
@@ -867,19 +873,25 @@ function createWindow() {
     console.timeEnd("main window startup");
   });
 
-  // Open all external links in default browser
+  const normalizeExternalUrl = (url: string): string =>
+    normalizeLocalhostProxyUrl({
+      url,
+      localhostProxyTemplate,
+    });
+
+  // Open all external links in default browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    void shell.openExternal(normalizeExternalUrl(url));
     return { action: "deny" };
   });
 
   mainWindow.webContents.on("will-navigate", (event, url) => {
     const currentOrigin = new URL(mainWindow!.webContents.getURL()).origin;
     const targetOrigin = new URL(url).origin;
-    // Prevent navigation away from app origin, open externally instead
+    // Prevent navigation away from app origin, open externally instead.
     if (targetOrigin !== currentOrigin) {
       event.preventDefault();
-      void shell.openExternal(url);
+      void shell.openExternal(normalizeExternalUrl(url));
     }
   });
 
