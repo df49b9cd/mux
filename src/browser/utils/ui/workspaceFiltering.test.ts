@@ -6,7 +6,6 @@ import {
   buildSortedWorkspacesByProject,
   computeWorkspaceDepthMap,
   computeAgentRowRenderMeta,
-  computePinnedCompletedChildIdsForAgeTiers,
   filterVisibleAgentRows,
   partitionWorkspacesBySection,
   sortSectionsByLinkedList,
@@ -82,7 +81,7 @@ describe("partitionWorkspacesByAge", () => {
     expect(buckets.every((b) => b.length === 0)).toBe(true);
   });
 
-  it("should handle workspace at exactly 24 hours (should show as recent due to always-show-one rule)", () => {
+  it("should place a workspace at exactly 24 hours in the older-than-1-day tiers", () => {
     const workspaces = [createWorkspace("exactly-24h")];
 
     const workspaceRecency = {
@@ -92,10 +91,9 @@ describe("partitionWorkspacesByAge", () => {
     const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
     const old = getAllOld(buckets);
 
-    // Even though it's exactly 24 hours old, it should show as recent (always show at least one)
-    expect(recent).toHaveLength(1);
-    expect(recent[0].id).toBe("exactly-24h");
-    expect(old).toHaveLength(0);
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(1);
+    expect(old[0]?.id).toBe("exactly-24h");
   });
 
   it("should preserve workspace order within partitions", () => {
@@ -119,7 +117,7 @@ describe("partitionWorkspacesByAge", () => {
     expect(old.map((w) => w.id)).toEqual(["old1", "old2", "old3"]);
   });
 
-  it("should always show at least one workspace when all are old", () => {
+  it("should keep all workspaces in old tiers when all are older than 1 day", () => {
     const workspaces = [createWorkspace("old1"), createWorkspace("old2"), createWorkspace("old3")];
 
     const workspaceRecency = {
@@ -131,13 +129,24 @@ describe("partitionWorkspacesByAge", () => {
     const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
     const old = getAllOld(buckets);
 
-    // Most recent should be moved to recent section
-    expect(recent).toHaveLength(1);
-    expect(recent[0].id).toBe("old1");
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(3);
+    expect(old.map((w) => w.id)).toEqual(["old1", "old2", "old3"]);
+  });
 
-    // Remaining should stay in old section
-    expect(old).toHaveLength(2);
-    expect(old.map((w) => w.id)).toEqual(["old2", "old3"]);
+  it("should keep a lone workspace older than 1 day out of the recent section", () => {
+    const workspaces = [createWorkspace("only-old")];
+
+    const workspaceRecency = {
+      "only-old": now - 2 * ONE_DAY_MS,
+    };
+
+    const { recent, buckets } = partitionWorkspacesByAge(workspaces, workspaceRecency);
+    const old = getAllOld(buckets);
+
+    expect(recent).toHaveLength(0);
+    expect(old).toHaveLength(1);
+    expect(old[0]?.id).toBe("only-old");
   });
 
   it("should partition into correct age buckets", () => {
@@ -171,7 +180,7 @@ describe("partitionWorkspacesByAge", () => {
   });
 });
 
-describe("computePinnedCompletedChildIdsForAgeTiers", () => {
+describe("partitionWorkspacesByAge hierarchy grouping", () => {
   const now = Date.now();
   const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -192,77 +201,58 @@ describe("computePinnedCompletedChildIdsForAgeTiers", () => {
     taskStatus: opts?.taskStatus,
   });
 
-  it("does not pin an expanded completed child when its parent row is hidden in a collapsed age tier", () => {
+  it("keeps sub-agents in old tiers when their parent is older than one day", () => {
     const workspaces = [
-      createWorkspace("recent-root"),
       createWorkspace("old-parent"),
-      createWorkspace("old-reported-child", {
+      createWorkspace("recent-active-child", {
+        parentWorkspaceId: "old-parent",
+        taskStatus: "running",
+      }),
+      createWorkspace("recent-completed-child", {
         parentWorkspaceId: "old-parent",
         taskStatus: "reported",
       }),
     ];
 
-    const pinnedIds = computePinnedCompletedChildIdsForAgeTiers({
-      workspaces,
-      workspaceRecency: {
-        "recent-root": now - 60 * 60 * 1000,
-        "old-parent": now - 45 * ONE_DAY_MS,
-        "old-reported-child": now - 44 * ONE_DAY_MS,
-      },
-      expandedParentIds: new Set(["old-parent"]),
-      isTierExpanded: () => false,
+    const { recent, buckets } = partitionWorkspacesByAge(workspaces, {
+      "old-parent": now - 2 * ONE_DAY_MS,
+      "recent-active-child": now - 60 * 60 * 1000,
+      "recent-completed-child": now - 30 * 60 * 1000,
     });
 
-    expect([...pinnedIds]).toEqual([]);
+    expect(recent).toHaveLength(0);
+    expect(buckets[0].map((workspace) => workspace.id)).toEqual([
+      "old-parent",
+      "recent-active-child",
+      "recent-completed-child",
+    ]);
   });
 
-  it("pins an expanded completed child when its parent row is visible in the recent tier", () => {
+  it("keeps sub-agents in the recent tier when their parent is recent", () => {
     const workspaces = [
       createWorkspace("recent-parent"),
-      createWorkspace("old-reported-child", {
+      createWorkspace("old-active-child", {
+        parentWorkspaceId: "recent-parent",
+        taskStatus: "running",
+      }),
+      createWorkspace("old-completed-child", {
         parentWorkspaceId: "recent-parent",
         taskStatus: "reported",
       }),
     ];
 
-    const pinnedIds = computePinnedCompletedChildIdsForAgeTiers({
-      workspaces,
-      workspaceRecency: {
-        "recent-parent": now - 60 * 60 * 1000,
-        "old-reported-child": now - 44 * ONE_DAY_MS,
-      },
-      expandedParentIds: new Set(["recent-parent"]),
-      isTierExpanded: () => false,
+    const { recent, buckets } = partitionWorkspacesByAge(workspaces, {
+      "recent-parent": now - 60 * 60 * 1000,
+      "old-active-child": now - 8 * ONE_DAY_MS,
+      "old-completed-child": now - 15 * ONE_DAY_MS,
     });
 
-    expect([...pinnedIds]).toEqual(["old-reported-child"]);
-  });
-
-  it("supports nested pinning when a parent becomes visible through pinning", () => {
-    const workspaces = [
-      createWorkspace("recent-root"),
-      createWorkspace("reported-grandchild", {
-        parentWorkspaceId: "reported-parent",
-        taskStatus: "reported",
-      }),
-      createWorkspace("reported-parent", {
-        parentWorkspaceId: "recent-root",
-        taskStatus: "reported",
-      }),
-    ];
-
-    const pinnedIds = computePinnedCompletedChildIdsForAgeTiers({
-      workspaces,
-      workspaceRecency: {
-        "recent-root": now - 60 * 60 * 1000,
-        "reported-parent": now - 44 * ONE_DAY_MS,
-        "reported-grandchild": now - 43 * ONE_DAY_MS,
-      },
-      expandedParentIds: new Set(["recent-root", "reported-parent"]),
-      isTierExpanded: () => false,
-    });
-
-    expect([...pinnedIds].sort()).toEqual(["reported-grandchild", "reported-parent"].sort());
+    expect(recent.map((workspace) => workspace.id)).toEqual([
+      "recent-parent",
+      "old-active-child",
+      "old-completed-child",
+    ]);
+    expect(buckets.flat()).toHaveLength(0);
   });
 });
 
