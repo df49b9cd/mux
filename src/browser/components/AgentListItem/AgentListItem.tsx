@@ -149,15 +149,28 @@ function getVisualState(opts: {
   return opts.isUnread ? "idle" : "seen";
 }
 
-function isStatusDotVisible(state: VisualState, isDraft?: boolean): boolean {
+function isStatusDotVisible(state: VisualState, isDraft?: boolean, isSubAgent?: boolean): boolean {
   if (isDraft) {
     return true;
   }
-  return state !== "seen" && state !== "hidden";
+  if (state === "hidden") {
+    return false;
+  }
+  if (state === "seen") {
+    return isSubAgent === true;
+  }
+  return true;
 }
 
-function StatusDot(props: { state: VisualState; isDraft?: boolean; overlay?: React.ReactNode }) {
-  const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft);
+function StatusDot(props: {
+  state: VisualState;
+  isDraft?: boolean;
+  isSubAgent?: boolean;
+  overlay?: React.ReactNode;
+}) {
+  const hasVisibleDot = isStatusDotVisible(props.state, props.isDraft, props.isSubAgent);
+  const usesSubAgentConnectorDot =
+    props.isSubAgent === true && (props.state === "idle" || props.state === "seen");
   const dot = props.isDraft ? (
     <span className="border-border-subtle block h-3 w-3 rounded-full border border-dashed" />
   ) : !hasVisibleDot ? (
@@ -168,7 +181,10 @@ function StatusDot(props: { state: VisualState; isDraft?: boolean; overlay?: Rea
         "block h-3 w-3",
         props.state === "active" &&
           "bg-content-success border-surface-green workspace-status-dot-active",
-        props.state === "idle" && "bg-surface-invert-secondary border-surface-tertiary",
+        usesSubAgentConnectorDot && "bg-border-light border-border-light h-2 w-2",
+        props.state === "idle" &&
+          props.isSubAgent !== true &&
+          "bg-surface-invert-secondary border-surface-tertiary",
         props.state === "error" && "bg-content-destructive border-surface-destructive",
         props.state === "question" && "bg-border-pending border-surface-sky",
         "rounded-full border-[3.5px]"
@@ -499,7 +515,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     isSelected,
     hasError,
   });
-  const showsVisibleStatusDot = isStatusDotVisible(visualState);
+  const isSubAgentRow = rowRenderMeta?.rowKind === "subagent";
+  const showsVisibleStatusDot = isStatusDotVisible(visualState, false, isSubAgentRow);
   const hasStatusText =
     Boolean(agentStatus) || awaitingUserQuestion || isWorking || isInitializing || isRemoving;
   // Note: we intentionally render the secondary row even while the workspace is still
@@ -645,6 +662,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
       >
         <StatusDot
           state={visualState}
+          isSubAgent={isSubAgentRow}
           overlay={
             showCompletedChildrenIndicator ? (
               <ChevronDown
@@ -912,6 +930,11 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
     const isElbowActive = props.metadata.taskStatus === "running";
+    const indentLeft = getItemPaddingLeft(props.depth);
+    const ancestorTrunks = rowMeta.ancestorTrunks.map((trunk) => ({
+      left: getItemPaddingLeft(trunk.depth) - 4,
+      active: trunk.active,
+    }));
 
     return (
       <SubAgentListItem
@@ -919,7 +942,8 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
         connectorStartsAtParent={rowMeta.connectorStartsAtParent}
         sharedTrunkActiveThroughRow={rowMeta.sharedTrunkActiveThroughRow}
         sharedTrunkActiveBelowRow={rowMeta.sharedTrunkActiveBelowRow}
-        indentLeft={getItemPaddingLeft(props.depth)}
+        ancestorTrunks={ancestorTrunks}
+        indentLeft={indentLeft}
         isSelected={props.isSelected}
         isElbowActive={isElbowActive}
       >
