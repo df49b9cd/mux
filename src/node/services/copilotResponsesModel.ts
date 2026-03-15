@@ -156,7 +156,8 @@ const SUPPRESSED_INNER_TYPES = new Set<string>([
 // ---------------------------------------------------------------------------
 
 interface OpenTextPart {
-  itemId: string;
+  /** Composite id emitted on text-start/delta/end (`${itemId}:${contentIndex}`). */
+  externalId: string;
   started: boolean;
   /** Accumulated text from deltas, used for reconciliation in output_text.done. */
   accum: string;
@@ -210,11 +211,9 @@ function createCopilotResponsesTransform(
 
     flush(controller) {
       // Close any still-open text parts (defensive — should not happen in normal flow).
-      // Use text.itemId (the external id from text-start), NOT the internal map key
-      // which has the format `${itemId}:${contentIndex}`.
       for (const [, text] of openTexts) {
         if (text.started) {
-          controller.enqueue({ type: "text-end", id: text.itemId });
+          controller.enqueue({ type: "text-end", id: text.externalId });
         }
       }
       openTexts.clear();
@@ -273,9 +272,12 @@ function createCopilotResponsesTransform(
     if (itemType === "message") {
       // A message item can have multiple content parts, but typically starts
       // with index 0. We emit text-start eagerly here — the SDK does the same.
+      // Use composite key as the external id so each content part gets a
+      // unique identity (prevents DevTools from overwriting accumulated text
+      // when multiple content indices share the same itemId).
       const key = `${itemId}:${getContentIndex(ev)}`;
-      openTexts.set(key, { itemId, started: true, accum: "" });
-      controller.enqueue({ type: "text-start", id: itemId });
+      openTexts.set(key, { externalId: key, started: true, accum: "" });
+      controller.enqueue({ type: "text-start", id: key });
     } else if (itemType === "function_call") {
       const item = ev.item as Record<string, unknown>;
       const callId = typeof item.call_id === "string" ? item.call_id : itemId;
@@ -311,15 +313,15 @@ function createCopilotResponsesTransform(
 
     // Ensure text-start was emitted (defensive against out-of-order events)
     if (!openTexts.has(key)) {
-      openTexts.set(key, { itemId, started: true, accum: "" });
-      controller.enqueue({ type: "text-start", id: itemId });
+      openTexts.set(key, { externalId: key, started: true, accum: "" });
+      controller.enqueue({ type: "text-start", id: key });
     }
 
     const delta = getDelta(ev);
     if (delta.length > 0) {
       const text = openTexts.get(key)!;
       text.accum += delta;
-      controller.enqueue({ type: "text-delta", id: itemId, delta });
+      controller.enqueue({ type: "text-delta", id: text.externalId, delta });
     }
   }
 
@@ -343,8 +345,8 @@ function createCopilotResponsesTransform(
     const key = `${itemId}:${contentIndex}`;
 
     if (!openTexts.has(key)) {
-      openTexts.set(key, { itemId, started: true, accum: "" });
-      controller.enqueue({ type: "text-start", id: itemId });
+      openTexts.set(key, { externalId: key, started: true, accum: "" });
+      controller.enqueue({ type: "text-start", id: key });
     }
 
     // Some servers include initial text inline in the content_part.added event
@@ -352,7 +354,7 @@ function createCopilotResponsesTransform(
     if (initialText && initialText.length > 0) {
       const text = openTexts.get(key)!;
       text.accum += initialText;
-      controller.enqueue({ type: "text-delta", id: itemId, delta: initialText });
+      controller.enqueue({ type: "text-delta", id: text.externalId, delta: initialText });
     }
   }
 
@@ -376,7 +378,7 @@ function createCopilotResponsesTransform(
       // Emit any trailing text that the deltas missed
       const trailing = finalText.slice(text.accum.length);
       text.accum = finalText;
-      controller.enqueue({ type: "text-delta", id: itemId, delta: trailing });
+      controller.enqueue({ type: "text-delta", id: text.externalId, delta: trailing });
     }
   }
 
@@ -396,7 +398,7 @@ function createCopilotResponsesTransform(
 
     const text = openTexts.get(key);
     if (text?.started) {
-      controller.enqueue({ type: "text-end", id: itemId });
+      controller.enqueue({ type: "text-end", id: text.externalId });
       openTexts.delete(key);
     }
   }
@@ -459,8 +461,8 @@ function createCopilotResponsesTransform(
     if (itemType === "message") {
       // Fallback: close any text parts that content_part.done did not already close
       for (const [key, text] of openTexts) {
-        if (text.itemId === itemId && text.started) {
-          controller.enqueue({ type: "text-end", id: itemId });
+        if (text.externalId.startsWith(`${itemId}:`) && text.started) {
+          controller.enqueue({ type: "text-end", id: text.externalId });
           openTexts.delete(key);
         }
       }

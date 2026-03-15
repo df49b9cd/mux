@@ -207,12 +207,11 @@ describe("wrapCopilotResponsesModel", () => {
       expect(deltas.map((d) => d.delta)).toContain(" text");
     });
 
-    // Regression: flush() used to emit text-end with the internal map key
-    // (`${itemId}:${contentIndex}`) instead of the external itemId, producing
-    // "text part <id>:0 not found" errors when the stream ended with an
-    // open text part (no content_part.done / output_item.done received).
-    it("flush emits text-end with the external itemId, not the internal key", async () => {
+    // Regression: flush() must emit text-end with the same composite id used
+    // by text-start, so downstream consumers (e.g. DevTools) can match them.
+    it("flush emits text-end with the same composite id as text-start", async () => {
       const messageItemId = "msg_flush_regression";
+      const expectedId = `${messageItemId}:0`;
       // Stream that opens a text part but never closes it — no content_part.done
       // or output_item.done, just a finish event followed by stream close.
       const stub = createStubModel([
@@ -241,20 +240,16 @@ describe("wrapCopilotResponsesModel", () => {
         id: string;
       }>;
       expect(textEnds).toHaveLength(1);
-
-      // Critical assertion: the id must be the external itemId, not
-      // the internal tracking key "${messageItemId}:0".
-      expect(textEnds[0].id).toBe(messageItemId);
-      expect(textEnds[0].id).not.toBe(`${messageItemId}:0`);
+      expect(textEnds[0].id).toBe(expectedId);
 
       // Verify the full lifecycle is coherent: text-start, text-delta, text-end
-      // all use the same external id.
+      // all use the same composite id.
       const textStarts = parts.filter((p) => p.type === "text-start") as Array<{
         type: "text-start";
         id: string;
       }>;
       expect(textStarts).toHaveLength(1);
-      expect(textStarts[0].id).toBe(messageItemId);
+      expect(textStarts[0].id).toBe(expectedId);
 
       const textDeltas = parts.filter((p) => p.type === "text-delta") as Array<{
         type: "text-delta";
@@ -262,7 +257,7 @@ describe("wrapCopilotResponsesModel", () => {
         delta: string;
       }>;
       expect(textDeltas).toHaveLength(1);
-      expect(textDeltas[0].id).toBe(messageItemId);
+      expect(textDeltas[0].id).toBe(expectedId);
       expect(textDeltas[0].delta).toBe("Hello world");
     });
   });
@@ -642,11 +637,24 @@ describe("wrapCopilotResponsesModel", () => {
         "finish",
       ]);
 
+      // Each content index gets a unique composite id so downstream consumers
+      // (e.g. DevTools) can track them independently.
+      const textStarts = parts.filter((p) => p.type === "text-start") as Array<{
+        type: "text-start";
+        id: string;
+      }>;
+      expect(textStarts[0].id).toBe(`${messageItemId}:0`);
+      expect(textStarts[1].id).toBe(`${messageItemId}:1`);
+
       const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
         type: "text-delta";
+        id: string;
         delta: string;
       }>;
       expect(deltas.map((d) => d.delta)).toEqual(["Hello", " world"]);
+      // Deltas for content_index 1
+      expect(deltas[0].id).toBe(`${messageItemId}:1`);
+      expect(deltas[1].id).toBe(`${messageItemId}:1`);
     });
 
     it("content_part.added emits text-start and initial delta when part carries text", async () => {

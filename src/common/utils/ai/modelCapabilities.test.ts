@@ -56,6 +56,15 @@ describe("getModelCapabilities", () => {
   it("returns null for unknown models", () => {
     expect(getModelCapabilities("anthropic:this-model-does-not-exist")).toBeNull();
   });
+
+  it("inherits bare-model capabilities when provider-scoped entry omits them", () => {
+    // github_copilot/gpt-4o in models.json lacks supports_pdf_input,
+    // but bare gpt-4o has it. The merge-across-keys strategy must fill
+    // in the missing field from the bare model.
+    const caps = getModelCapabilities("github-copilot:gpt-4o");
+    expect(caps).not.toBeNull();
+    expect(caps?.supportsPdfInput).toBe(true);
+  });
 });
 
 describe("getSupportedInputMediaTypes", () => {

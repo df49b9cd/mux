@@ -95,20 +95,29 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
   const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
   const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
 
-  // Merge models.json (upstream) + models-extra.ts (local overrides). Extras win.
-  // This avoids wiping capabilities (e.g. PDF support) when modelsExtra only overrides
-  // pricing/token limits.
+  // Merge across ALL matching lookup keys so provider-scoped entries (first
+  // in lookup order) override specific fields while bare-model entries fill
+  // in capabilities the provider-scoped entry omits (e.g. github_copilot/gpt-4o
+  // lacks supports_pdf_input but bare gpt-4o has it).
+  // Within each key, modelsExtra wins over modelsData (upstream).
+  let merged: RawModelCapabilitiesData | null = null;
   for (const key of lookupKeys) {
     const base = modelsDataRecord[key];
     const extra = modelsExtraRecord[key];
 
     if (base || extra) {
-      const merged: RawModelCapabilitiesData = { ...(base ?? {}), ...(extra ?? {}) };
-      return extractModelCapabilities(merged);
+      const keyData: RawModelCapabilitiesData = Object.assign({}, base ?? {}, extra ?? {});
+      if (merged != null) {
+        // Earlier keys (provider-scoped) take priority; later keys (bare model)
+        // fill gaps but don't override.
+        merged = Object.assign({}, keyData, merged);
+      } else {
+        merged = keyData;
+      }
     }
   }
 
-  return null;
+  return merged ? extractModelCapabilities(merged) : null;
 }
 
 export function getModelCapabilitiesResolved(
@@ -137,8 +146,8 @@ export function getSupportedInputMediaTypes(
  * Resolve supported API endpoints for a model string from static metadata.
  *
  * Returns the `supported_endpoints` array (e.g. `["/v1/responses"]`) when
- * found in models-extra or models.json, or `null` when no metadata exists.
- * Follows the same lookup-key + merge strategy as `getModelCapabilities`.
+ * found in models-extra or models.json, or `null` when no metadata exists
+ * or the metadata lacks endpoint information.
  */
 export function getSupportedEndpoints(modelString: string): string[] | null {
   const normalized = normalizeToCanonical(modelString);
