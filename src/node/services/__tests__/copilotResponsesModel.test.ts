@@ -206,6 +206,65 @@ describe("wrapCopilotResponsesModel", () => {
       expect(deltas.map((d) => d.delta)).toContain("Early");
       expect(deltas.map((d) => d.delta)).toContain(" text");
     });
+
+    // Regression: flush() used to emit text-end with the internal map key
+    // (`${itemId}:${contentIndex}`) instead of the external itemId, producing
+    // "text part <id>:0 not found" errors when the stream ended with an
+    // open text part (no content_part.done / output_item.done received).
+    it("flush emits text-end with the external itemId, not the internal key", async () => {
+      const messageItemId = "msg_flush_regression";
+      // Stream that opens a text part but never closes it — no content_part.done
+      // or output_item.done, just a finish event followed by stream close.
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "Hello world",
+        }),
+        // Stream ends here — no content_part.done, no output_item.done.
+        finish("stop", 10, 5),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      // The flush fallback must close the open text part.
+      const textEnds = parts.filter((p) => p.type === "text-end") as Array<{
+        type: "text-end";
+        id: string;
+      }>;
+      expect(textEnds).toHaveLength(1);
+
+      // Critical assertion: the id must be the external itemId, not
+      // the internal tracking key "${messageItemId}:0".
+      expect(textEnds[0]!.id).toBe(messageItemId);
+      expect(textEnds[0]!.id).not.toBe(`${messageItemId}:0`);
+
+      // Verify the full lifecycle is coherent: text-start, text-delta, text-end
+      // all use the same external id.
+      const textStarts = parts.filter((p) => p.type === "text-start") as Array<{
+        type: "text-start";
+        id: string;
+      }>;
+      expect(textStarts).toHaveLength(1);
+      expect(textStarts[0]!.id).toBe(messageItemId);
+
+      const textDeltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        id: string;
+        delta: string;
+      }>;
+      expect(textDeltas).toHaveLength(1);
+      expect(textDeltas[0]!.id).toBe(messageItemId);
+      expect(textDeltas[0]!.delta).toBe("Hello world");
+    });
   });
 
   describe("inner semantic part suppression", () => {
