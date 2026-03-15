@@ -1533,7 +1533,7 @@ export class ProviderModelFactory {
         // back to bare-model metadata via alias resolution. Conservative default:
         // use chat/completions when no endpoint metadata exists.
         const fullCopilotModelId = `github-copilot:${modelId}`;
-        const endpoints = getSupportedEndpointsResolved(fullCopilotModelId, null);
+        const endpoints = getSupportedEndpointsResolved(fullCopilotModelId, providersConfig);
         const supportsResponses = endpoints?.includes("/v1/responses") ?? false;
         // Prefer responses when available; fall back to chat (current behavior)
         // when only chat is supported or endpoint metadata is absent entirely.

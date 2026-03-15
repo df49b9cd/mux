@@ -144,6 +144,23 @@ describe("getSupportedEndpointsResolved", () => {
     expect(endpoints).toContain("/v1/responses");
   });
 
+  it("resolves endpoints via config-based mappedToModel alias", () => {
+    // "custom-copilot-alias" has no provider-scoped or bare-model metadata,
+    // but the providers config maps it to gpt-5.4 which has known endpoints.
+    const config = {
+      "github-copilot": {
+        models: [{ id: "custom-copilot-alias", mappedToModel: "gpt-5.4" }],
+      },
+    };
+    const endpoints = getSupportedEndpointsResolved("github-copilot:custom-copilot-alias", config);
+    expect(endpoints).toContain("/v1/responses");
+  });
+
+  it("returns null for unknown model when config has no mapping", () => {
+    // Without config, the same unknown model returns null.
+    expect(getSupportedEndpointsResolved("github-copilot:custom-copilot-alias", null)).toBeNull();
+  });
+
   it("returns null for unknown model without any metadata", () => {
     expect(getSupportedEndpointsResolved("github-copilot:totally-fake-model", null)).toBeNull();
   });

@@ -1,4 +1,4 @@
-import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { ProvidersConfigWithModels } from "@/common/utils/providers/modelEntries";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import modelsData from "../tokens/models.json";
 import { modelsExtra } from "../tokens/models-extra";
@@ -113,7 +113,7 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
 
 export function getModelCapabilitiesResolved(
   modelString: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): ModelCapabilities | null {
   const metadataModel = resolveModelForMetadata(modelString, providersConfig);
   return getModelCapabilities(metadataModel);
@@ -168,7 +168,7 @@ export function getSupportedEndpoints(modelString: string): string[] | null {
  */
 export function getSupportedEndpointsResolved(
   modelString: string,
-  providersConfig: ProvidersConfigMap | null
+  providersConfig: ProvidersConfigWithModels | null
 ): string[] | null {
   // Try the raw (possibly gateway-scoped) key first so provider-specific
   // endpoint overrides (e.g. `github_copilot/gpt-5.4`) take priority.
