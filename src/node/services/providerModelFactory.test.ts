@@ -452,6 +452,13 @@ describe("ProviderModelFactory routing", () => {
 });
 
 describe("ProviderModelFactory Copilot endpoint selection", () => {
+  // Helper: extract the SDK provider identifier from a LanguageModel.
+  // At runtime createModel always returns an object model (LanguageModelV3),
+  // but the TS union type includes string literals so we narrow here.
+  function getModelProvider(model: unknown): string {
+    return (model as { provider: string }).provider;
+  }
+
   it("uses responses endpoint for a Copilot model with /v1/responses support", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
@@ -466,7 +473,7 @@ describe("ProviderModelFactory Copilot endpoint selection", () => {
       if (!result.success) return;
 
       // When responses endpoint is supported, model provider should include "responses"
-      expect(result.data.provider).toContain("responses");
+      expect(getModelProvider(result.data)).toContain("responses");
     });
   });
 
@@ -483,7 +490,7 @@ describe("ProviderModelFactory Copilot endpoint selection", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.provider).toContain("responses");
+      expect(getModelProvider(result.data)).toContain("responses");
     });
   });
 
@@ -500,8 +507,8 @@ describe("ProviderModelFactory Copilot endpoint selection", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.provider).toContain("chat");
-      expect(result.data.provider).not.toContain("responses");
+      expect(getModelProvider(result.data)).toContain("chat");
+      expect(getModelProvider(result.data)).not.toContain("responses");
     });
   });
 
@@ -518,8 +525,8 @@ describe("ProviderModelFactory Copilot endpoint selection", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.provider).toContain("chat");
-      expect(result.data.provider).not.toContain("responses");
+      expect(getModelProvider(result.data)).toContain("chat");
+      expect(getModelProvider(result.data)).not.toContain("responses");
     });
   });
 
@@ -537,7 +544,7 @@ describe("ProviderModelFactory Copilot endpoint selection", () => {
       expect(result.success).toBe(true);
       if (!result.success) return;
 
-      expect(result.data.provider).toContain("responses");
+      expect(getModelProvider(result.data)).toContain("responses");
     });
   });
 });
