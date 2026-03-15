@@ -41,6 +41,7 @@ import {
   normalizeGatewayStreamUsage,
   normalizeGatewayGenerateResult,
 } from "@/node/utils/gatewayStreamNormalization";
+import { wrapCopilotResponsesModel } from "@/node/services/copilotResponsesModel";
 import { EnvHttpProxyAgent, type Dispatcher } from "undici";
 import packageJson from "../../../package.json";
 
@@ -1551,7 +1552,7 @@ export class ProviderModelFactory {
             apiKey: "copilot", // placeholder — actual auth via custom fetch
             fetch: providerFetch,
           });
-          return Ok(provider.responses(modelId));
+          return Ok(wrapCopilotResponsesModel(provider.responses(modelId)));
         }
 
         const { createOpenAICompatible } = await PROVIDER_REGISTRY["github-copilot"]();
