@@ -393,7 +393,7 @@ function createCopilotResponsesTransform(
     const key = `${itemId}:${contentIndex}`;
 
     const text = openTexts.get(key);
-    if (text && text.started) {
+    if (text?.started) {
       controller.enqueue({ type: "text-end", id: itemId });
       openTexts.delete(key);
     }
