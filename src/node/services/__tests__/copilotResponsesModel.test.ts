@@ -511,6 +511,454 @@ describe("wrapCopilotResponsesModel", () => {
     });
   });
 
+  describe("content_part lifecycle events", () => {
+    it("rebuilds text lifecycle from content_part.added / output_text.done / content_part.done", async () => {
+      const messageItemId = "msg_cp";
+      const stub = createStubModel([
+        // output_item.added for the message
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        // content_part.added with output_text type — should emit text-start
+        // (but output_item.added already started one at index 0, so this is
+        // for a second content part at index 1)
+        raw({
+          type: "response.content_part.added",
+          item_id: messageItemId,
+          content_index: 1,
+          part: { type: "output_text", text: "" },
+        }),
+        // Text deltas for second content part
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 1,
+          delta: "Hello",
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 1,
+          delta: " world",
+        }),
+        // output_text.done reconciliation
+        raw({
+          type: "response.output_text.done",
+          item_id: messageItemId,
+          content_index: 1,
+          text: "Hello world",
+        }),
+        // content_part.done closes the text part
+        raw({
+          type: "response.content_part.done",
+          item_id: messageItemId,
+          content_index: 1,
+          part: { type: "output_text", text: "Hello world" },
+        }),
+        // Close any remaining text from output_item
+        raw({
+          type: "response.output_item.done",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        finish("stop", 10, 5),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+
+      // First text-start from output_item.added (index 0), second from content_part.added (index 1)
+      expect(types).toEqual([
+        "text-start", // from output_item.added (message, content_index 0)
+        "text-start", // from content_part.added (output_text, content_index 1)
+        "text-delta", // "Hello"
+        "text-delta", // " world"
+        "text-end", // from content_part.done (content_index 1)
+        "text-end", // from output_item.done fallback (content_index 0)
+        "finish",
+      ]);
+
+      const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        delta: string;
+      }>;
+      expect(deltas.map((d) => d.delta)).toEqual(["Hello", " world"]);
+    });
+
+    it("content_part.added emits text-start and initial delta when part carries text", async () => {
+      const messageItemId = "msg_cp_init";
+      const stub = createStubModel([
+        raw({
+          type: "response.content_part.added",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "output_text", text: "Initial" },
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: " more",
+        }),
+        raw({
+          type: "response.content_part.done",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "output_text", text: "Initial more" },
+        }),
+        finish("stop", 5, 3),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      expect(types).toEqual([
+        "text-start", // from content_part.added
+        "text-delta", // "Initial" (initial text from content_part.added)
+        "text-delta", // " more" (from output_text.delta)
+        "text-end", // from content_part.done
+        "finish",
+      ]);
+
+      const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        delta: string;
+      }>;
+      expect(deltas.map((d) => d.delta)).toEqual(["Initial", " more"]);
+    });
+
+    it("ignores content_part.added for non-output_text types", async () => {
+      const messageItemId = "msg_cp_other";
+      const stub = createStubModel([
+        // A content_part.added with an unsupported type should not trigger text-start
+        raw({
+          type: "response.content_part.added",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "refusal", refusal: "I cannot help with that" },
+        }),
+        finish("stop", 5, 1),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      expect(types).toEqual(["finish"]);
+    });
+  });
+
+  describe("output_text.done reconciliation", () => {
+    it("emits trailing text delta when output_text.done has more text than accumulated deltas", async () => {
+      const messageItemId = "msg_reconcile";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "Hello",
+        }),
+        // output_text.done has final text that includes trailing content not in deltas
+        raw({
+          type: "response.output_text.done",
+          item_id: messageItemId,
+          content_index: 0,
+          text: "Hello world",
+        }),
+        raw({
+          type: "response.output_item.done",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        finish("stop", 10, 5),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      expect(types).toEqual([
+        "text-start",
+        "text-delta", // "Hello" from delta
+        "text-delta", // " world" reconciled from output_text.done
+        "text-end", // from output_item.done fallback
+        "finish",
+      ]);
+
+      const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        delta: string;
+      }>;
+      expect(deltas.map((d) => d.delta)).toEqual(["Hello", " world"]);
+    });
+
+    it("does not emit extra delta when output_text.done matches accumulated text", async () => {
+      const messageItemId = "msg_no_reconcile";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "Hello world",
+        }),
+        // output_text.done matches exactly — no reconciliation needed
+        raw({
+          type: "response.output_text.done",
+          item_id: messageItemId,
+          content_index: 0,
+          text: "Hello world",
+        }),
+        raw({
+          type: "response.output_item.done",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        finish("stop", 10, 5),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      // Only one text-delta — no extra reconciliation delta
+      expect(types).toEqual(["text-start", "text-delta", "text-end", "finish"]);
+
+      const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        delta: string;
+      }>;
+      expect(deltas).toHaveLength(1);
+      expect(deltas[0].delta).toBe("Hello world");
+    });
+  });
+
+  describe("function_call_arguments.done lifecycle", () => {
+    it("finalizes tool call from arguments.done, making output_item.done a no-op", async () => {
+      const callId = "call_argsdone";
+      const toolName = "bash";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: "fc_ad", type: "function_call", call_id: callId, name: toolName },
+          output_index: 0,
+        }),
+        raw({ type: "response.function_call_arguments.delta", output_index: 0, delta: '{"script' }),
+        raw({ type: "response.function_call_arguments.delta", output_index: 0, delta: '":"ls"}' }),
+        // function_call_arguments.done delivers final args and finalizes the tool
+        raw({
+          type: "response.function_call_arguments.done",
+          output_index: 0,
+          arguments: '{"script":"ls"}',
+        }),
+        // output_item.done should be a no-op since args-done already finalized
+        raw({
+          type: "response.output_item.done",
+          item: {
+            id: "fc_ad",
+            type: "function_call",
+            call_id: callId,
+            name: toolName,
+            arguments: '{"script":"ls"}',
+          },
+          output_index: 0,
+        }),
+        finish("tool-calls", 20, 10),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      // Only one tool-input-end and one tool-call — not doubled by output_item.done
+      expect(types).toEqual([
+        "tool-input-start",
+        "tool-input-delta",
+        "tool-input-delta",
+        "tool-input-end",
+        "tool-call",
+        "finish",
+      ]);
+
+      const toolCall = parts.find((p) => p.type === "tool-call") as {
+        type: "tool-call";
+        toolCallId: string;
+        toolName: string;
+        input: string;
+      };
+      expect(toolCall.toolCallId).toBe(callId);
+      expect(toolCall.toolName).toBe(toolName);
+      expect(toolCall.input).toBe('{"script":"ls"}');
+    });
+
+    it("reconciles arguments from done event when deltas were incomplete", async () => {
+      const callId = "call_reconcile_args";
+      const toolName = "file_read";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: "fc_ra", type: "function_call", call_id: callId, name: toolName },
+          output_index: 0,
+        }),
+        // Only partial arguments via delta
+        raw({ type: "response.function_call_arguments.delta", output_index: 0, delta: '{"path":' }),
+        // Done event carries the full arguments
+        raw({
+          type: "response.function_call_arguments.done",
+          output_index: 0,
+          arguments: '{"path":"src/test.ts"}',
+        }),
+        finish("tool-calls", 10, 5),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const toolCall = parts.find((p) => p.type === "tool-call") as {
+        type: "tool-call";
+        input: string;
+      };
+      // Final input should be from the done event, not the incomplete deltas
+      expect(toolCall.input).toBe('{"path":"src/test.ts"}');
+    });
+  });
+
+  describe("content_part.done closes text before output_item.done", () => {
+    it("content_part.done emits text-end so output_item.done does not double-close", async () => {
+      const messageItemId = "msg_cp_first";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "Hi",
+        }),
+        // content_part.done closes the text part
+        raw({
+          type: "response.content_part.done",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "output_text", text: "Hi" },
+        }),
+        // output_item.done should not double-close
+        raw({
+          type: "response.output_item.done",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        finish("stop", 5, 2),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      // Exactly one text-end, not two
+      expect(types).toEqual(["text-start", "text-delta", "text-end", "finish"]);
+    });
+  });
+
+  describe("full plan lifecycle ordering", () => {
+    it("handles the complete content_part event sequence from the plan", async () => {
+      // Simulates the exact sequence from the accepted plan:
+      // content_part.added → output_text.delta → output_text.done → content_part.done → output_item.done
+      // This is the ordering that would previously trip "text part <id> not found".
+      const messageItemId = "msg_plan";
+      const stub = createStubModel([
+        raw({
+          type: "response.output_item.added",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        raw({
+          type: "response.content_part.added",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "output_text", text: "" },
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "Test ",
+        }),
+        raw({
+          type: "response.output_text.delta",
+          item_id: messageItemId,
+          content_index: 0,
+          delta: "output",
+        }),
+        raw({
+          type: "response.output_text.done",
+          item_id: messageItemId,
+          content_index: 0,
+          text: "Test output",
+        }),
+        raw({
+          type: "response.content_part.done",
+          item_id: messageItemId,
+          content_index: 0,
+          part: { type: "output_text", text: "Test output" },
+        }),
+        raw({
+          type: "response.output_item.done",
+          item: { id: messageItemId, type: "message" },
+          output_index: 0,
+        }),
+        finish("stop", 15, 8),
+      ]);
+
+      const wrapped = wrapCopilotResponsesModel(stub);
+      const result = await wrapped.doStream(baseOptions);
+      const parts = await collectStream(result.stream);
+
+      const types = parts.map((p) => p.type);
+      // output_item.added emits text-start for index 0,
+      // content_part.added sees key already exists so does NOT emit duplicate text-start,
+      // deltas emit text-delta, output_text.done is a no-op (matches accumulated),
+      // content_part.done emits text-end, output_item.done is a no-op (already closed)
+      expect(types).toEqual([
+        "text-start",
+        "text-delta", // "Test "
+        "text-delta", // "output"
+        "text-end",
+        "finish",
+      ]);
+
+      const deltas = parts.filter((p) => p.type === "text-delta") as Array<{
+        type: "text-delta";
+        delta: string;
+      }>;
+      expect(deltas.map((d) => d.delta)).toEqual(["Test ", "output"]);
+    });
+  });
   describe("mixed text and tool calls", () => {
     it("handles interleaved text and tool call events", async () => {
       const msgId = "msg_mixed";
