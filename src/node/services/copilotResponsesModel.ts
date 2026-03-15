@@ -64,6 +64,26 @@ function isFunctionCallArgsDelta(ev: RawResponsesEvent): boolean {
   return ev.type === "response.function_call_arguments.delta";
 }
 
+// response.content_part.added
+function isContentPartAdded(ev: RawResponsesEvent): boolean {
+  return ev.type === "response.content_part.added";
+}
+
+// response.content_part.done
+function isContentPartDone(ev: RawResponsesEvent): boolean {
+  return ev.type === "response.content_part.done";
+}
+
+// response.output_text.done
+function isTextDone(ev: RawResponsesEvent): boolean {
+  return ev.type === "response.output_text.done";
+}
+
+// response.function_call_arguments.done
+function isFunctionCallArgsDone(ev: RawResponsesEvent): boolean {
+  return ev.type === "response.function_call_arguments.done";
+}
+
 // response.failed
 function isResponseFailed(ev: RawResponsesEvent): boolean {
   return ev.type === "response.failed";
@@ -98,6 +118,24 @@ function getDelta(ev: RawResponsesEvent): string {
   return typeof ev.delta === "string" ? ev.delta : "";
 }
 
+function getPartType(ev: RawResponsesEvent): string | undefined {
+  const part = ev.part as Record<string, unknown> | undefined;
+  return part && typeof part.type === "string" ? part.type : undefined;
+}
+
+function getPartText(ev: RawResponsesEvent): string | undefined {
+  const part = ev.part as Record<string, unknown> | undefined;
+  return part && typeof part.text === "string" ? part.text : undefined;
+}
+
+function getText(ev: RawResponsesEvent): string | undefined {
+  return typeof ev.text === "string" ? ev.text : undefined;
+}
+
+function getArguments(ev: RawResponsesEvent): string | undefined {
+  return typeof ev.arguments === "string" ? ev.arguments : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Semantic part types suppressed from the inner stream
 // ---------------------------------------------------------------------------
@@ -120,6 +158,8 @@ const SUPPRESSED_INNER_TYPES = new Set<string>([
 interface OpenTextPart {
   itemId: string;
   started: boolean;
+  /** Accumulated text from deltas, used for reconciliation in output_text.done. */
+  accum: string;
 }
 
 interface OpenToolCall {
@@ -197,10 +237,18 @@ function createCopilotResponsesTransform(
   ): void {
     if (isOutputItemAdded(ev)) {
       handleOutputItemAdded(ev, controller);
+    } else if (isContentPartAdded(ev)) {
+      handleContentPartAdded(ev, controller);
     } else if (isTextDelta(ev)) {
       handleTextDelta(ev, controller);
+    } else if (isTextDone(ev)) {
+      handleTextDone(ev, controller);
+    } else if (isContentPartDone(ev)) {
+      handleContentPartDone(ev, controller);
     } else if (isFunctionCallArgsDelta(ev)) {
       handleFunctionCallArgsDelta(ev, controller);
+    } else if (isFunctionCallArgsDone(ev)) {
+      handleFunctionCallArgsDone(ev, controller);
     } else if (isOutputItemDone(ev)) {
       handleOutputItemDone(ev, controller);
     } else if (isResponseFailed(ev)) {
@@ -224,7 +272,7 @@ function createCopilotResponsesTransform(
       // A message item can have multiple content parts, but typically starts
       // with index 0. We emit text-start eagerly here — the SDK does the same.
       const key = `${itemId}:${getContentIndex(ev)}`;
-      openTexts.set(key, { itemId, started: true });
+      openTexts.set(key, { itemId, started: true, accum: "" });
       controller.enqueue({ type: "text-start", id: itemId });
     } else if (itemType === "function_call") {
       const item = ev.item as Record<string, unknown>;
@@ -261,13 +309,93 @@ function createCopilotResponsesTransform(
 
     // Ensure text-start was emitted (defensive against out-of-order events)
     if (!openTexts.has(key)) {
-      openTexts.set(key, { itemId, started: true });
+      openTexts.set(key, { itemId, started: true, accum: "" });
       controller.enqueue({ type: "text-start", id: itemId });
     }
 
     const delta = getDelta(ev);
     if (delta.length > 0) {
+      const text = openTexts.get(key)!;
+      text.accum += delta;
       controller.enqueue({ type: "text-delta", id: itemId, delta });
+    }
+  }
+
+  /**
+   * response.content_part.added — emitted when a new content part (e.g., output_text)
+   * is added to a message item. Triggers text-start if not already started, plus an
+   * optional initial text-delta if the part carries inline text.
+   */
+  function handleContentPartAdded(
+    ev: RawResponsesEvent,
+    controller: TransformStreamDefaultController<LanguageModelV3StreamPart>
+  ): void {
+    const itemId = typeof ev.item_id === "string" ? ev.item_id : undefined;
+    if (!itemId) return;
+
+    const partType = getPartType(ev);
+    // Only handle output_text content parts
+    if (partType !== "output_text") return;
+
+    const contentIndex = getContentIndex(ev);
+    const key = `${itemId}:${contentIndex}`;
+
+    if (!openTexts.has(key)) {
+      openTexts.set(key, { itemId, started: true, accum: "" });
+      controller.enqueue({ type: "text-start", id: itemId });
+    }
+
+    // Some servers include initial text inline in the content_part.added event
+    const initialText = getPartText(ev);
+    if (initialText && initialText.length > 0) {
+      const text = openTexts.get(key)!;
+      text.accum += initialText;
+      controller.enqueue({ type: "text-delta", id: itemId, delta: initialText });
+    }
+  }
+
+  /**
+   * response.output_text.done — emitted when the full text for a content part
+   * is finalized. Reconciles any trailing text that was not delivered via deltas.
+   */
+  function handleTextDone(
+    ev: RawResponsesEvent,
+    controller: TransformStreamDefaultController<LanguageModelV3StreamPart>
+  ): void {
+    const itemId = typeof ev.item_id === "string" ? ev.item_id : undefined;
+    if (!itemId) return;
+
+    const contentIndex = getContentIndex(ev);
+    const key = `${itemId}:${contentIndex}`;
+    const finalText = getText(ev);
+
+    const text = openTexts.get(key);
+    if (text && finalText != null && finalText.length > text.accum.length) {
+      // Emit any trailing text that the deltas missed
+      const trailing = finalText.slice(text.accum.length);
+      text.accum = finalText;
+      controller.enqueue({ type: "text-delta", id: itemId, delta: trailing });
+    }
+  }
+
+  /**
+   * response.content_part.done — emitted when a content part is fully done.
+   * Closes the text part with text-end.
+   */
+  function handleContentPartDone(
+    ev: RawResponsesEvent,
+    controller: TransformStreamDefaultController<LanguageModelV3StreamPart>
+  ): void {
+    const itemId = typeof ev.item_id === "string" ? ev.item_id : undefined;
+    if (!itemId) return;
+
+    const contentIndex = getContentIndex(ev);
+    const key = `${itemId}:${contentIndex}`;
+
+    const text = openTexts.get(key);
+    if (text && text.started) {
+      controller.enqueue({ type: "text-end", id: itemId });
+      openTexts.delete(key);
     }
   }
 
@@ -287,6 +415,37 @@ function createCopilotResponsesTransform(
     }
   }
 
+  /**
+   * response.function_call_arguments.done — emitted when the final arguments
+   * for a function call are available. Reconciles accumulated args and finalizes
+   * the tool call (tool-input-end + tool-call), so output_item.done becomes
+   * a no-op fallback for this tool.
+   */
+  function handleFunctionCallArgsDone(
+    ev: RawResponsesEvent,
+    controller: TransformStreamDefaultController<LanguageModelV3StreamPart>
+  ): void {
+    const outputIndex = getOutputIndex(ev);
+    const tool = openTools.get(outputIndex);
+    if (!tool || tool.finalized) return;
+
+    // Reconcile final arguments from the done event
+    const finalArgs = getArguments(ev);
+    if (finalArgs != null) {
+      tool.args = finalArgs;
+    }
+
+    finalizeToolCall(tool, controller);
+    openTools.delete(outputIndex);
+  }
+
+  /**
+   * response.output_item.done — fallback finalization.
+   * For message items: closes any still-open text parts that content_part.done did not
+   * already close (e.g., when the server omits content_part events).
+   * For function_call items: finalizes only if function_call_arguments.done was not
+   * received (the tool will already be deleted from openTools if args-done ran).
+   */
   function handleOutputItemDone(
     ev: RawResponsesEvent,
     controller: TransformStreamDefaultController<LanguageModelV3StreamPart>
@@ -296,7 +455,7 @@ function createCopilotResponsesTransform(
     if (!itemId) return;
 
     if (itemType === "message") {
-      // Close all text parts for this message item
+      // Fallback: close any text parts that content_part.done did not already close
       for (const [key, text] of openTexts) {
         if (text.itemId === itemId && text.started) {
           controller.enqueue({ type: "text-end", id: itemId });
@@ -304,6 +463,7 @@ function createCopilotResponsesTransform(
         }
       }
     } else if (itemType === "function_call") {
+      // Fallback: finalize only if function_call_arguments.done did not already do so
       const outputIndex = getOutputIndex(ev);
       const tool = openTools.get(outputIndex);
       if (tool && !tool.finalized) {
