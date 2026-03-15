@@ -451,6 +451,97 @@ describe("ProviderModelFactory routing", () => {
   });
 });
 
+describe("ProviderModelFactory Copilot endpoint selection", () => {
+  it("uses responses endpoint for a Copilot model with /v1/responses support", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-5.2 has Copilot-scoped metadata with both /v1/chat/completions and /v1/responses
+      const result = await factory.createModel("github-copilot:gpt-5.2");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      // When responses endpoint is supported, model provider should include "responses"
+      expect(result.data.provider).toContain("responses");
+    });
+  });
+
+  it("uses responses endpoint for a responses-only Copilot model", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-5.1-codex-max in models.json has supported_endpoints: ["/v1/responses"] only
+      const result = await factory.createModel("github-copilot:gpt-5.1-codex-max");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.provider).toContain("responses");
+    });
+  });
+
+  it("uses chat endpoint for a chat-only Copilot model", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // claude-sonnet-4 in models.json has supported_endpoints: ["/v1/chat/completions"]
+      const result = await factory.createModel("github-copilot:claude-sonnet-4");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.provider).toContain("chat");
+      expect(result.data.provider).not.toContain("responses");
+    });
+  });
+
+  it("falls back to chat endpoint when endpoint metadata is absent", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // gpt-4o has no supported_endpoints in either copilot-scoped or bare metadata
+      const result = await factory.createModel("github-copilot:gpt-4o");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.provider).toContain("chat");
+      expect(result.data.provider).not.toContain("responses");
+    });
+  });
+
+  it("inherits bare-model endpoint metadata when provider-scoped entry is missing", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        "github-copilot": {
+          apiKey: "ghu_test",
+        },
+      });
+
+      // github_copilot/gpt-5.4 does NOT exist in models.json,
+      // but bare "gpt-5.4" in models-extra has supported_endpoints with /v1/responses.
+      const result = await factory.createModel("github-copilot:gpt-5.4");
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(result.data.provider).toContain("responses");
+    });
+  });
+});
+
 describe("classifyCopilotInitiator", () => {
   it("returns 'user' when last message role is user", () => {
     const body = JSON.stringify({ messages: [{ role: "user", content: "hello" }] });

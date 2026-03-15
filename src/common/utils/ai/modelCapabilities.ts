@@ -11,6 +11,7 @@ interface RawModelCapabilitiesData {
   supports_video_input?: boolean;
   max_pdf_size_mb?: number;
   litellm_provider?: string;
+  supported_endpoints?: string[];
   [key: string]: unknown;
 }
 
@@ -126,4 +127,58 @@ export function getSupportedInputMediaTypes(
   if (caps.supportsAudioInput) result.add("audio");
   if (caps.supportsVideoInput) result.add("video");
   return result;
+}
+
+/**
+ * Resolve supported API endpoints for a model string from static metadata.
+ *
+ * Returns the `supported_endpoints` array (e.g. `["/v1/responses"]`) when
+ * found in models-extra or models.json, or `null` when no metadata exists.
+ * Follows the same lookup-key + merge strategy as `getModelCapabilities`.
+ */
+export function getSupportedEndpoints(modelString: string): string[] | null {
+  const normalized = normalizeToCanonical(modelString);
+  const lookupKeys = generateLookupKeys(normalized);
+
+  const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
+  const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
+
+  for (const key of lookupKeys) {
+    const base = modelsDataRecord[key];
+    const extra = modelsExtraRecord[key];
+
+    if (base || extra) {
+      // Extra wins for the same field; merge so we don't lose base-only endpoints.
+      const merged: RawModelCapabilitiesData = { ...(base ?? {}), ...(extra ?? {}) };
+      return merged.supported_endpoints ?? null;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Like `getSupportedEndpoints`, but first resolves config aliases
+ * (e.g. `mappedToModel`) so gateway-scoped model IDs inherit metadata
+ * from the underlying model when the gateway-scoped key has no entry.
+ */
+export function getSupportedEndpointsResolved(
+  modelString: string,
+  providersConfig: ProvidersConfigMap | null
+): string[] | null {
+  // Try the raw (possibly gateway-scoped) key first so provider-specific
+  // endpoint overrides (e.g. `github_copilot/gpt-5.4`) take priority.
+  const direct = getSupportedEndpoints(modelString);
+  if (direct != null) {
+    return direct;
+  }
+
+  // Fall back to the metadata-resolved alias (e.g. mappedToModel) so
+  // models without a provider-scoped entry inherit from the bare model.
+  const metadataModel = resolveModelForMetadata(modelString, providersConfig);
+  if (metadataModel !== modelString) {
+    return getSupportedEndpoints(metadataModel);
+  }
+
+  return null;
 }
