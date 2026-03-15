@@ -244,8 +244,8 @@ describe("wrapCopilotResponsesModel", () => {
 
       // Critical assertion: the id must be the external itemId, not
       // the internal tracking key "${messageItemId}:0".
-      expect(textEnds[0]!.id).toBe(messageItemId);
-      expect(textEnds[0]!.id).not.toBe(`${messageItemId}:0`);
+      expect(textEnds[0].id).toBe(messageItemId);
+      expect(textEnds[0].id).not.toBe(`${messageItemId}:0`);
 
       // Verify the full lifecycle is coherent: text-start, text-delta, text-end
       // all use the same external id.
@@ -254,7 +254,7 @@ describe("wrapCopilotResponsesModel", () => {
         id: string;
       }>;
       expect(textStarts).toHaveLength(1);
-      expect(textStarts[0]!.id).toBe(messageItemId);
+      expect(textStarts[0].id).toBe(messageItemId);
 
       const textDeltas = parts.filter((p) => p.type === "text-delta") as Array<{
         type: "text-delta";
@@ -262,8 +262,8 @@ describe("wrapCopilotResponsesModel", () => {
         delta: string;
       }>;
       expect(textDeltas).toHaveLength(1);
-      expect(textDeltas[0]!.id).toBe(messageItemId);
-      expect(textDeltas[0]!.delta).toBe("Hello world");
+      expect(textDeltas[0].id).toBe(messageItemId);
+      expect(textDeltas[0].delta).toBe("Hello world");
     });
   });
 
