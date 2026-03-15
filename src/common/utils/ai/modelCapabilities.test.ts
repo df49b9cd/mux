@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { getModelCapabilities, getSupportedInputMediaTypes } from "./modelCapabilities";
+import {
+  getModelCapabilities,
+  getSupportedEndpoints,
+  getSupportedEndpointsResolved,
+  getSupportedInputMediaTypes,
+} from "./modelCapabilities";
 
 describe("getModelCapabilities", () => {
   it("returns capabilities for known models", () => {
@@ -64,5 +69,62 @@ describe("getSupportedInputMediaTypes", () => {
     const supported = getSupportedInputMediaTypes("openai:gpt-5.4");
     expect(supported).not.toBeNull();
     expect(supported?.has("pdf")).toBe(true);
+  });
+});
+
+describe("getSupportedEndpoints", () => {
+  it("returns endpoints for a responses-only model", () => {
+    // gpt-5.4-pro in models-extra has supported_endpoints: ["/v1/responses"]
+    const endpoints = getSupportedEndpoints("openai:gpt-5.4-pro");
+    expect(endpoints).toEqual(["/v1/responses"]);
+  });
+
+  it("returns endpoints for a chat-only Copilot model", () => {
+    // github_copilot/claude-sonnet-4 in models.json has supported_endpoints: ["/v1/chat/completions"]
+    const endpoints = getSupportedEndpoints("github-copilot:claude-sonnet-4");
+    expect(endpoints).toEqual(["/v1/chat/completions"]);
+  });
+
+  it("returns both endpoints for a model supporting chat and responses", () => {
+    // gpt-5.4 in models-extra has supported_endpoints: ["/v1/chat/completions", "/v1/responses"]
+    const endpoints = getSupportedEndpoints("openai:gpt-5.4");
+    expect(endpoints).toContain("/v1/chat/completions");
+    expect(endpoints).toContain("/v1/responses");
+  });
+
+  it("returns endpoints for Copilot model using provider alias lookup", () => {
+    // github_copilot/gpt-5.2 in models.json has both endpoints
+    const endpoints = getSupportedEndpoints("github-copilot:gpt-5.2");
+    expect(endpoints).toContain("/v1/chat/completions");
+    expect(endpoints).toContain("/v1/responses");
+  });
+
+  it("returns null when model metadata exists but has no endpoint info", () => {
+    // claude-opus-4-5 in models-extra has no supported_endpoints
+    const endpoints = getSupportedEndpoints("anthropic:claude-opus-4-5");
+    expect(endpoints).toBeNull();
+  });
+
+  it("returns null for completely unknown models", () => {
+    expect(getSupportedEndpoints("unknown:does-not-exist")).toBeNull();
+  });
+});
+
+describe("getSupportedEndpointsResolved", () => {
+  it("resolves Copilot model with provider-scoped metadata", () => {
+    // github_copilot/gpt-5.1-codex-max in models.json has supported_endpoints: ["/v1/responses"]
+    const endpoints = getSupportedEndpointsResolved("github-copilot:gpt-5.1-codex-max", null);
+    expect(endpoints).toEqual(["/v1/responses"]);
+  });
+
+  it("falls back to bare model name when provider-scoped entry is missing", () => {
+    // github_copilot/gpt-5.4 does NOT exist in models.json, but
+    // bare "gpt-5.4" in models-extra has supported_endpoints.
+    const endpoints = getSupportedEndpointsResolved("github-copilot:gpt-5.4", null);
+    expect(endpoints).toContain("/v1/responses");
+  });
+
+  it("returns null for unknown model without any metadata", () => {
+    expect(getSupportedEndpointsResolved("github-copilot:totally-fake-model", null)).toBeNull();
   });
 });
