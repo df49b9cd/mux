@@ -99,6 +99,17 @@ describe("getSupportedEndpoints", () => {
     expect(endpoints).toContain("/v1/responses");
   });
 
+  it("prefers provider-scoped endpoints over bare model endpoints", () => {
+    // bare "gpt-5.2" includes /v1/batch, but github_copilot/gpt-5.2 does not.
+    // The provider-scoped entry should win when queried with a provider prefix.
+    const endpoints = getSupportedEndpoints("github-copilot:gpt-5.2");
+    expect(endpoints).not.toContain("/v1/batch");
+
+    // Sanity: the bare model does include /v1/batch
+    const bareEndpoints = getSupportedEndpoints("gpt-5.2");
+    expect(bareEndpoints).toContain("/v1/batch");
+  });
+
   it("returns null when model metadata exists but has no endpoint info", () => {
     // claude-opus-4-5 in models-extra has no supported_endpoints
     const endpoints = getSupportedEndpoints("anthropic:claude-opus-4-5");
@@ -115,6 +126,15 @@ describe("getSupportedEndpointsResolved", () => {
     // github_copilot/gpt-5.1-codex-max in models.json has supported_endpoints: ["/v1/responses"]
     const endpoints = getSupportedEndpointsResolved("github-copilot:gpt-5.1-codex-max", null);
     expect(endpoints).toEqual(["/v1/responses"]);
+  });
+
+  it("prefers provider-scoped endpoints over bare model in resolved path", () => {
+    // github_copilot/gpt-5.2 restricts to chat+responses (no /v1/batch),
+    // while bare gpt-5.2 includes /v1/batch. Provider-scoped must win.
+    const endpoints = getSupportedEndpointsResolved("github-copilot:gpt-5.2", null);
+    expect(endpoints).toContain("/v1/chat/completions");
+    expect(endpoints).toContain("/v1/responses");
+    expect(endpoints).not.toContain("/v1/batch");
   });
 
   it("falls back to bare model name when provider-scoped entry is missing", () => {

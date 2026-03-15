@@ -42,11 +42,12 @@ function generateLookupKeys(modelString: string): string[] {
   const modelName = colonIndex !== -1 ? modelString.slice(colonIndex + 1) : modelString;
   const litellmProvider = PROVIDER_KEY_ALIASES[provider] ?? provider;
 
-  const keys: string[] = [
-    modelName, // Direct model name (e.g., "claude-opus-4-5")
-  ];
+  const keys: string[] = [];
 
   if (provider) {
+    // Provider-scoped keys first so provider-specific metadata (e.g.
+    // `github_copilot/gpt-5.2` restricting `/v1/batch`) wins over the
+    // generic bare-model entry.
     keys.push(
       `${litellmProvider}/${modelName}`, // "ollama/gpt-oss:20b"
       `${litellmProvider}/${modelName}-cloud` // "ollama/gpt-oss:20b-cloud" (LiteLLM convention)
@@ -59,6 +60,9 @@ function generateLookupKeys(modelString: string): string[] {
       keys.push(`${litellmProvider}/${baseModel}`);
     }
   }
+
+  // Bare model name is the last-resort fallback.
+  keys.push(modelName);
 
   return keys;
 }
