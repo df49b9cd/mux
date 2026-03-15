@@ -209,10 +209,12 @@ function createCopilotResponsesTransform(
     },
 
     flush(controller) {
-      // Close any still-open text parts (defensive — should not happen in normal flow)
-      for (const [key, text] of openTexts) {
+      // Close any still-open text parts (defensive — should not happen in normal flow).
+      // Use text.itemId (the external id from text-start), NOT the internal map key
+      // which has the format `${itemId}:${contentIndex}`.
+      for (const [, text] of openTexts) {
         if (text.started) {
-          controller.enqueue({ type: "text-end", id: key });
+          controller.enqueue({ type: "text-end", id: text.itemId });
         }
       }
       openTexts.clear();
